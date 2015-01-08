@@ -8,6 +8,8 @@ import random
 import sys
 from smtp_stuff import sendMail 
 from imap_stuff import checkMessages
+import socket
+import struct
 
 
 AVERAGE_SBDIX_DELAY = 1     #TODO: implement randomness, average is ~30s
@@ -57,13 +59,16 @@ incoming_server = ''
 outgoing_server = ''
 password = ''
 
-email_enabled = False
+mo_ip = '127.0.0.1'
+mo_port = 10801
+mt_port = 10800
 
 imei = 300234060379270
 
 email_enabled = False
 ip_enabled = False
 http_post_enabled = False
+
 
 
 def send_mo_email():
@@ -142,7 +147,9 @@ def sbdix():
     global password
     global imei
     global mt_buffer
-    
+    global mo_ip
+    global mo_port
+
     has_incoming_msg = False
     received_msg = 0
     received_msg_size = 0
@@ -172,6 +179,19 @@ def sbdix():
             else:
                 received_msg_size = 0
     
+        elif ip_enabled:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            if mo_set and not mo_buffer == "":
+                momsn += 1
+                try:
+                    s.connect((mo_ip, mo_port))
+                    s.send(assemble_mo_directip_packet())
+                    s.close()
+                except socket.error as msg:
+                    print "Failed to open {}:{}".format(mo_ip, mo_port)
+                    s.close()                
+                mo_set = False
+
     #TODO: generate result output
     if success: rpt = 0
     else: rpt = 18 #TODO: add more sophisticated behavior for error msgs
@@ -408,6 +428,44 @@ def write_binary_start(cmd,start_index):
         send_error()
 
 
+def assemble_mo_directip_packet():
+    global imei
+    global momsn
+    global mtmsn
+    global mo_buffer
+
+    # ==== MO HEADER ====
+    # MO Header IEI           char               1
+    # MO Header Length        unsigned short
+    # CDR Reference (Auto ID) unsigned integer
+    # IMEI                    char
+    # Session Status          unsigned char
+    # MOMSN                   unsigned short
+    # MTMSN                   unsigned short
+    # Time of Session         unsigned integer
+    header_fmt = "!bHI15sBHHI"
+    header_iei = 0x01
+    # header_length does not include iei and length fields
+    header_length = struct.calcsize(header_fmt) - struct.calcsize('!bH')
+    cdr_ref = random.getrandbits(32)
+    session_status = 0
+    header = struct.pack(header_fmt, header_iei, header_length, cdr_ref, str(imei), session_status, momsn, mtmsn, int(time.time()))
+
+    print header
+
+    # ==== MO PAYLOAD ====
+    # MO Payload IEI         char               2
+    # MO Payload Length      unsigned short    
+    # MO Payload             char 
+    payload_iei = 0x02
+    payload_length = min(len(mo_buffer), 1960)
+    payload = struct.pack('!bH' + str(payload_length) + 's', payload_iei, payload_length, mo_buffer)
+
+    protocol_rev_no = 1    
+    overall_msg_length = len(header) + len(payload)    
+    preheader = struct.pack('!bH', protocol_rev_no, overall_msg_length)
+    return preheader + header + payload
+
 def parse_cmd(cmd):
     #get string up to newline or '=' 
     index = cmd.find('=')
@@ -471,13 +529,21 @@ def main():
     global ip_enabled
     global http_post_enabled
     
+    global mo_ip
+    global mo_port
+    global mt_port
+
+
     parser = OptionParser()
     parser.add_option("-d", "--dev", dest="dev", action="store", help="tty dev(ex. '/dev/ttyUSB0'", metavar="DEV")
     parser.add_option("-p", "--passwd", dest="passwd", action="store", help="Password", metavar="PASSWD")
     parser.add_option("-u", "--user", dest="user", action="store", help="E-mail account username", metavar="USER")
     parser.add_option("-r", "--recipient", dest="recipient", action="store", help="Destination e-mail address.", metavar="USER")
     parser.add_option("-i", "--in_srv", dest="in_srv", action="store", help="Incoming e-mail server url", metavar="IN_SRV")
-    parser.add_option("-o", "--out_srv", dest="out_srv", action="store", help="Outoging e-mail server", metavar="OUT_SRV")
+    parser.add_option("-o", "--out_srv", dest="out_srv", action="store", help="Outging e-mail server", metavar="OUT_SRV")
+    parser.add_option("--mo_ip", dest="mo_ip", action="store", help="Mobile-originated DirectIP server IP address", metavar="MO_IP", default="127.0.0.1")
+    parser.add_option("--mo_port", dest="mo_port", action="store", help="Mobile-originated DirectIP server Port", metavar="MO_PORT", default=10801)
+    parser.add_option("--mt_port", dest="mt_port", action="store", help="Mobile-terminated DirectIP server Port", metavar="MT_PORT", default=10800)
     parser.add_option("-m", "--mode", dest="mode", action="store", help="Mode: EMAIL,HTTP_POST,IP,NONE", default="NONE", metavar="MODE")
 
     (options, args) = parser.parse_args()
@@ -493,8 +559,8 @@ def main():
         print 'Not implemented yet'
         sys.exit()
     elif options.mode == "IP":
-        print 'Not implemented yet'
-        sys.exit()
+        print 'Using IP mode with MO ({}:{}) and MT (0.0.0.0:{}) servers'.format(options.mo_ip, options.mo_port, options.mt_port)
+        ip_enabled = True
     else:
         print "No valid mode specified"
         sys.exit()
@@ -505,6 +571,11 @@ def main():
     incoming_server = options.in_srv
     outgoing_server = options.out_srv
     password = options.passwd
+
+    mo_ip = options.mo_ip
+    mo_port = options.mo_port
+    mt_port = options.mt_port
+
 
     now_get_checksum_first = False
     now_get_checksum_second = False
