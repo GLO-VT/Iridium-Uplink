@@ -10,7 +10,8 @@ from smtp_stuff import sendMail
 from imap_stuff import checkMessages
 import socket
 import struct
-
+import asyncore
+import threading
 
 AVERAGE_SBDIX_DELAY = 1     #TODO: implement randomness, average is ~30s
 STDEV_SBDIX_DELAY = 1 
@@ -427,45 +428,6 @@ def write_binary_start(cmd,start_index):
     except:
         send_error()
 
-
-def assemble_mo_directip_packet():
-    global imei
-    global momsn
-    global mtmsn
-    global mo_buffer
-
-    # ==== MO HEADER ====
-    # MO Header IEI           char               1
-    # MO Header Length        unsigned short
-    # CDR Reference (Auto ID) unsigned integer
-    # IMEI                    char
-    # Session Status          unsigned char
-    # MOMSN                   unsigned short
-    # MTMSN                   unsigned short
-    # Time of Session         unsigned integer
-    header_fmt = "!bHI15sBHHI"
-    header_iei = 0x01
-    # header_length does not include iei and length fields
-    header_length = struct.calcsize(header_fmt) - struct.calcsize('!bH')
-    cdr_ref = random.getrandbits(32)
-    session_status = 0
-    header = struct.pack(header_fmt, header_iei, header_length, cdr_ref, str(imei), session_status, momsn, mtmsn, int(time.time()))
-
-    print header
-
-    # ==== MO PAYLOAD ====
-    # MO Payload IEI         char               2
-    # MO Payload Length      unsigned short    
-    # MO Payload             char 
-    payload_iei = 0x02
-    payload_length = min(len(mo_buffer), 1960)
-    payload = struct.pack('!bH' + str(payload_length) + 's', payload_iei, payload_length, mo_buffer)
-
-    protocol_rev_no = 1    
-    overall_msg_length = len(header) + len(payload)    
-    preheader = struct.pack('!bH', protocol_rev_no, overall_msg_length)
-    return preheader + header + payload
-
 def parse_cmd(cmd):
     #get string up to newline or '=' 
     index = cmd.find('=')
@@ -510,6 +472,83 @@ def parse_cmd(cmd):
 def open_port(dev,baudrate):
     ser = serial.Serial(dev, 19200, timeout=1000, parity=serial.PARITY_NONE)
     return ser
+
+
+def assemble_mo_directip_packet():
+    global imei
+    global momsn
+    global mtmsn
+    global mo_buffer
+
+    # ==== MO HEADER ====
+    # MO Header IEI           char               1
+    # MO Header Length        unsigned short
+    # CDR Reference (Auto ID) unsigned integer
+    # IMEI                    char
+    # Session Status          unsigned char
+    # MOMSN                   unsigned short
+    # MTMSN                   unsigned short
+    # Time of Session         unsigned integer
+    header_fmt = "!bHI15sBHHI"
+    header_iei = 0x01
+    # header_length does not include iei and length fields
+    header_length = struct.calcsize(header_fmt) - struct.calcsize('!bH')
+    cdr_ref = random.getrandbits(32)
+    session_status = 0
+    header = struct.pack(header_fmt, header_iei, header_length, cdr_ref, str(imei), session_status, momsn, mtmsn, int(time.time()))
+
+    # ==== MO PAYLOAD ====
+    # MO Payload IEI         char               2
+    # MO Payload Length      unsigned short    
+    # MO Payload             char 
+    payload_iei = 0x02
+    payload_length = min(len(mo_buffer), 1960)
+    payload = struct.pack('!bH' + str(payload_length) + 's', payload_iei, payload_length, mo_buffer)
+
+    protocol_rev_no = 1    
+    overall_msg_length = len(header) + len(payload)    
+    preheader = struct.pack('!bH', protocol_rev_no, overall_msg_length)
+    return preheader + header + payload
+
+
+class MobileTerminatedHandler(asyncore.dispatcher_with_send):
+    def __init__(self, sock, addr):
+        asyncore.dispatcher_with_send.__init__(self, sock)
+        self.identified_protocol = False
+        self.client = None
+        self.addr = addr
+	self.initial_data = ""
+
+    def handle_read(self):
+        data = self.recv(20)
+        print data.encode("hex")
+        
+    def handle_close(self):
+        print 'MT Handler: Connection closed from %spytho' % repr(self.addr)
+        sys.stdout.flush()
+        self.close()
+
+
+class MobileTerminatedServer(asyncore.dispatcher):
+
+    def __init__(self, host, port):
+        asyncore.dispatcher.__init__(self)
+        self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.set_reuse_addr()
+        self.bind((host, port))
+        self.listen(5)
+
+    def handle_accept(self):
+        pair = self.accept()
+        if pair is not None:
+            sock, addr = pair
+            print 'MT Handler: Incoming connection from %s' % repr(addr)
+            sys.stdout.flush()
+        try:
+            handler = MobileTerminatedHandler(sock, addr)
+        except: 
+            print "MT Handler: Unexpected error:", sys.exc_info()[0]
+
     
 def main():
     
@@ -560,6 +599,12 @@ def main():
         sys.exit()
     elif options.mode == "IP":
         print 'Using IP mode with MO ({}:{}) and MT (0.0.0.0:{}) servers'.format(options.mo_ip, options.mo_port, options.mt_port)
+        server = MobileTerminatedServer('0.0.0.0', mt_port)
+        loop_thread = threading.Thread(target=asyncore.loop, name="Asyncore Loop")
+        loop_thread.daemon = True
+        loop_thread.start()
+        print "Started MT Server on port {}".format(mt_port)
+        sys.stdout.flush()
         ip_enabled = True
     else:
         print "No valid mode specified"
@@ -594,6 +639,9 @@ def main():
     
     while(1):
         new_char = ser.read()
+        if (len(new_char) == 0):
+            continue 
+
         #print new_char
         if echo and not binary_rx:
             ser.write(new_char)
