@@ -11,7 +11,6 @@ from imap_stuff import checkMessages
 import socket
 import struct
 import asyncore
-import threading
 
 AVERAGE_SBDIX_DELAY = 1     #TODO: implement randomness, average is ~30s
 STDEV_SBDIX_DELAY = 1 
@@ -177,6 +176,7 @@ def sbdix():
                 #mtmsn += 1
                 received_msg_size = len(temp)
                 mt_buffer = temp
+                mt_set = True
             else:
                 received_msg_size = 0
     
@@ -192,6 +192,7 @@ def sbdix():
                     print "Failed to open {}:{}".format(mo_ip, mo_port)
                     s.close()                
                 mo_set = False
+            received_msg_size = len(mt_buffer)
 
     #TODO: generate result output
     if success: rpt = 0
@@ -470,8 +471,10 @@ def parse_cmd(cmd):
     
 
 def open_port(dev,baudrate):
-    ser = serial.Serial(dev, 19200, timeout=1000, parity=serial.PARITY_NONE)
+    ser = serial.Serial(dev, 19200, timeout=.1, parity=serial.PARITY_NONE)
     return ser
+
+
 
 
 def assemble_mo_directip_packet():
@@ -481,10 +484,10 @@ def assemble_mo_directip_packet():
     global mo_buffer
 
     # ==== MO HEADER ====
-    # MO Header IEI           char               1
+    # MO Header IEI           char               0x01
     # MO Header Length        unsigned short
     # CDR Reference (Auto ID) unsigned integer
-    # IMEI                    char
+    # IMEI                    char[] (15 bytes)
     # Session Status          unsigned char
     # MOMSN                   unsigned short
     # MTMSN                   unsigned short
@@ -498,7 +501,7 @@ def assemble_mo_directip_packet():
     header = struct.pack(header_fmt, header_iei, header_length, cdr_ref, str(imei), session_status, momsn, mtmsn, int(time.time()))
 
     # ==== MO PAYLOAD ====
-    # MO Payload IEI         char               2
+    # MO Payload IEI         char               0x02
     # MO Payload Length      unsigned short    
     # MO Payload             char 
     payload_iei = 0x02
@@ -510,21 +513,118 @@ def assemble_mo_directip_packet():
     preheader = struct.pack('!bH', protocol_rev_no, overall_msg_length)
     return preheader + header + payload
 
+def parse_mt_directip_packet(buffer):
+    global mt_buffer
+    global mtmsn
+
+    parse_offset = 0
+    preheader_fmt = '!bH'
+    ie_header_fmt = '!bH'
+    preheader = struct.unpack_from(preheader_fmt, buffer, parse_offset)
+    parse_offset += struct.calcsize(preheader_fmt)
+
+    header_iei = 0x41
+    payload_iei = 0x42
+    prio_iei = 0x46
+    header = None
+    payload = None
+
+    while parse_offset + struct.calcsize(ie_header_fmt) < len(buffer):
+        ie_header = struct.unpack_from(ie_header_fmt, buffer, parse_offset)
+        print 'IE Header: ' + str(ie_header)
+        parse_offset += struct.calcsize(ie_header_fmt)
+
+        if ie_header[0] == header_iei:
+            # ==== MT HEADER ====
+            # MT Header IEI                char            0x41
+            # MT Header Length             unsigned short
+            # Unique Client Message ID     unsigned int
+            # IMEI (User ID)               char[] (15 bytes)
+            # MT Disposition Flags char    unsigned short
+            header_fmt = '!I15sH'
+            header = struct.unpack_from(header_fmt, buffer, parse_offset)
+            print 'Header: ' + str(header)
+        elif ie_header[0] == payload_iei:
+            # ==== MT PAYLOAD ====
+            # MO Payload IEI         char               2
+            # MO Payload Length      unsigned short    
+            # MO Payload             char 
+            payload_fmt = str(ie_header[1]) + 's'
+            payload = struct.unpack_from(payload_fmt, buffer, parse_offset)
+            print 'Payload: ' + str(payload)
+            mt_buffer = payload[0]
+            mtmsn += 1
+            mt_set = True
+        else:
+            print 'Unknown IEI: %x'.format(ie_header[0])
+            
+        parse_offset += ie_header[1]
+    return (header, payload)
+
+def assemble_mt_directip_response(mt_packet):
+    confirm_iei = 0x44
+    confirm_fmt = "!bHI15sIh"
+    confirm_length = struct.calcsize(confirm_fmt) - struct.calcsize('!bH')
+    session_status = 0
+    client_id = 0
+    imei = '0'*15
+    if mt_packet[0] is not None:
+        print mt_packet
+        session_status = 1 # 1 message queued
+        client_id = mt_packet[0][0]
+        imei = mt_packet[0][1]
+    else:
+        session_status = -7 # violation of MT DirectIP protocol error
+
+
+    # MT Confirmation Message IEI
+    # MT Confirmation Message Length
+    # Unique Client Message ID
+    # IMEI (User ID)
+    # Auto ID Reference
+    # MT Message Status
+    auto_id = random.getrandbits(32)
+    confirm = struct.pack(confirm_fmt, confirm_iei, confirm_length, client_id, imei, auto_id, session_status)
+    
+    protocol_rev_no = 1    
+    overall_msg_length = len(confirm)
+    preheader = struct.pack('!bH', protocol_rev_no, overall_msg_length)
+    return preheader + confirm
+
 
 class MobileTerminatedHandler(asyncore.dispatcher_with_send):
     def __init__(self, sock, addr):
         asyncore.dispatcher_with_send.__init__(self, sock)
-        self.identified_protocol = False
         self.client = None
         self.addr = addr
-	self.initial_data = ""
+	self.data = ""
+        self.msg_length = 0
+        self.preheader_fmt = '!bH'
+        self.preheader_size = struct.calcsize(self.preheader_fmt)
 
     def handle_read(self):
-        data = self.recv(20)
-        print data.encode("hex")
+        if len(self.data) < self.preheader_size:
+            self.data += self.recv(self.preheader_size)
+            preheader = struct.unpack(self.preheader_fmt, self.data)
+            self.msg_length = preheader[1]
+        else:
+            self.data += self.recv(self.msg_length)
         
+        print self.msg_length
+        print self.data.encode("hex")
+            
+        if len(self.data) >= self.msg_length:
+            mt_packet = None
+            try: 
+                mt_packet = parse_mt_directip_packet(self.data)
+            except:
+                print 'MT Handler: Invalid message'
+            # response message
+            self.send(assemble_mt_directip_response(mt_packet))
+            self.handle_close()
+
     def handle_close(self):
-        print 'MT Handler: Connection closed from %spytho' % repr(self.addr)
+        print 'MT Handler: Connection closed from %s' % repr(self.addr)
         sys.stdout.flush()
         self.close()
 
@@ -572,6 +672,11 @@ def main():
     global mo_port
     global mt_port
 
+    # try:
+    #     parse_mt_directip_packet(("010061420046" + "00" * 70 + "4100154D7367313330303033343031303132333435300000").decode('hex'))
+    # except:
+    #     print 'Could not parse MT packet'
+    #     quit()
 
     parser = OptionParser()
     parser.add_option("-d", "--dev", dest="dev", action="store", help="tty dev(ex. '/dev/ttyUSB0'", metavar="DEV")
@@ -600,9 +705,6 @@ def main():
     elif options.mode == "IP":
         print 'Using IP mode with MO ({}:{}) and MT (0.0.0.0:{}) servers'.format(options.mo_ip, options.mo_port, options.mt_port)
         server = MobileTerminatedServer('0.0.0.0', mt_port)
-        loop_thread = threading.Thread(target=asyncore.loop, name="Asyncore Loop")
-        loop_thread.daemon = True
-        loop_thread.start()
         print "Started MT Server on port {}".format(mt_port)
         sys.stdout.flush()
         ip_enabled = True
@@ -638,7 +740,10 @@ def main():
     binary_checksum = 0
     
     while(1):
-        new_char = ser.read()
+        if ip_enabled:
+            asyncore.loop(timeout=0, count=1) # non-blocking loop
+
+        new_char = ser.read() # timeout after .1 seconds to return to asyncore.loop()
         if (len(new_char) == 0):
             continue 
 
