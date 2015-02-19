@@ -1,5 +1,5 @@
 import serial
-from serial.tools import list_ports
+#from serial.tools import list_ports
 import os
 from optparse import OptionParser
 import io
@@ -108,22 +108,22 @@ Message is Attached.'\
     
     sendMail(subject, body, user, recipient, password, outgoing_server, attachment)
 
-def list_serial_ports():
-    # Windows
-    if os.name == 'nt':
-        # Scan for available ports.
-        available = []
-        for i in range(256):
-            try:
-                s = serial.Serial(i)
-                available.append('COM'+str(i + 1))
-                s.close()
-            except serial.SerialException:
-                pass
-        return available
-    else:
-        # Mac / Linux
-        return [port[0] for port in list_ports.comports()]
+# def list_serial_ports():
+#     # Windows
+#     if os.name == 'nt':
+#         # Scan for available ports.
+#         available = []
+#         for i in range(256):
+#             try:
+#                 s = serial.Serial(i)
+#                 available.append('COM'+str(i + 1))
+#                 s.close()
+#             except serial.SerialException:
+#                 pass
+#         return available
+#     else:
+#         # Mac / Linux
+#         return [port[0] for port in list_ports.comports()]
 
 def write_text(cmd,start_index):
     global mo_set
@@ -286,19 +286,19 @@ def clear_buffers(buffer):
         mo_buffer = ''
         mo_set = False
         ser.write('\r\n0\r\n')
-        send_ok()
+#        send_ok()
     elif buffer == 1:
         mt_buffer = ''
         mt_set = False
         ser.write('\r\n0\r\n')
-        send_ok()
+#        send_ok()
     elif buffer == 2:
         mt_buffer = ''
         mo_buffer = ''
         mo_set = False
         mt_set = False
         ser.write('\r\n0\r\n')
-        send_ok()
+#        send_ok()
     else:
         send_error()
     
@@ -424,6 +424,7 @@ def write_binary_start(cmd,start_index):
             send_ok()
             binary_rx_incoming_bytes = 0
         else:
+            print 'Ready to receive {} bytes'.format(binary_rx_incoming_bytes)
             send_ready()
             binary_rx = True
     except:
@@ -703,7 +704,7 @@ def main():
         print 'Not implemented yet'
         sys.exit()
     elif options.mode == "IP":
-        print 'Using IP mode with MO ({}:{}) and MT (0.0.0.0:{}) servers'.format(options.mo_ip, options.mo_port, options.mt_port)
+        print 'Using IP mode with MO ({}:{}) and MT (0.0.0.0:{}) servers'.format(options.mo_ip, int(options.mo_port), options.mt_port)
         server = MobileTerminatedServer('0.0.0.0', mt_port)
         print "Started MT Server on port {}".format(mt_port)
         sys.stdout.flush()
@@ -720,7 +721,9 @@ def main():
     password = options.passwd
 
     mo_ip = options.mo_ip
-    mo_port = options.mo_port
+    mo_port = int(options.mo_port)
+
+
     mt_port = options.mt_port
 
 
@@ -731,8 +734,8 @@ def main():
         ser = open_port(options.dev,19200)
     except:
         print "Could not open serial port.  Exiting."
-        print "FYI - Here's a list of ports on your system."
-        print list_serial_ports()
+#        print "FYI - Here's a list of ports on your system."
+#        print list_serial_ports()
         sys.exit()
     
     rx_buffer = ''
@@ -779,14 +782,14 @@ def main():
                 if (checksum_first * 256 + checksum_second) == (binary_checksum & (2**16-1)):
                     print "Good binary checksum"
                     ser.write('\r\n0\r\n')
-                    send_ok()
+                    #send_ok()
                     mo_buffer = rx_buffer
                     rx_buffer = ''
                     mo_set = True
                 else:
                     print "Bad binary checksum"
                     ser.write('\r\n2\r\n')
-                    send_ok()
+                    #send_ok()
                     rx_buffer = ''
                     ser.write('\n')            
                 binary_checksum = 0
