@@ -6,7 +6,7 @@
 
 import asyncore
 import socket
-from sbd_packets import parse_mt_directip_packet
+from virtual_iridium.sbd_packets import parse_mt_directip_packet
 from collections import deque
 import struct
 

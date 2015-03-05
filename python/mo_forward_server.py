@@ -38,20 +38,59 @@ class ConditionalForwardHandler(asyncore.dispatcher_with_send):
     def __init__(self, sock, addr):
         asyncore.dispatcher_with_send.__init__(self, sock)
         self.identified_protocol = False
-        self.sbd_client = None
-        self.hayes_client = None
         self.addr = addr
 	self.initial_data = ""
+        self.buf = ""
+        self.hayes_client = ConditionalForwardClient(self, hayes_server, hayes_port)
+        self.sbd_client = ConditionalForwardClient(self, sbd_server, sbd_port)
+        self.sbd_write = False
+        self.sbd_bytes_remaining = 0
 
     def handle_read(self):
-	for line in self.makefile('r'):
-            print(line)
+        data = self.recv(256)
+        
+        print data.encode("hex")
+
+        if not data:
+            return
+        elif self.sbd_write: # not line mode - raw data
+            self.sbd_send_bytes(data)
+        else: # line based Command data
+            self.buf += data
+            line_list = self.buf.split('\r')
+            # partial line
+            self.buf = line_list[-1]
+        
+            for line in line_list[0:-1]:
+                self.line_process(line)
 
     def handle_close(self):
         print 'Connection closed from %s' % repr(self.addr)
         sys.stdout.flush()
         self.close()
 
+    def line_process(self, line):
+        line_cr = line + '\r'
+        
+        if line.strip().upper() in ['ATE']:
+            self.hayes_client.send(line_cr)
+            self.sbd_client.send(line_cr)
+        else:
+            if len(line) >= 6 and line[2:6].upper() == "+SBD":
+                self.sbd_client.send(line_cr)
+                if len(line) >= 8 and line[2:8].upper() == "+SBDWB":
+                    parts = line.split('=')
+                    self.sbd_bytes_remaining = int(parts[1]) + 2 # 2 checksum bytes
+                    self.sbd_write = True
+            else:
+                self.hayes_client.send(line_cr)
+    
+    def sbd_send_bytes(self, bytes):
+        self.sbd_bytes_remaining -= len(bytes)
+        self.sbd_client.send(bytes)
+        print self.sbd_bytes_remaining
+        if self.sbd_bytes_remaining <= 0:
+            self.sbd_write = False
 
 class ConditionalForwardServer(asyncore.dispatcher):
 

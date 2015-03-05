@@ -1,3 +1,4 @@
+#!/usr/bin/python
 import serial
 #from serial.tools import list_ports
 import os
@@ -6,15 +7,15 @@ import io
 import time
 import random
 import sys
-from smtp_stuff import sendMail 
-from imap_stuff import checkMessages
+from virtual_iridium.smtp_stuff import sendMail 
+from virtual_iridium.imap_stuff import checkMessages
 import socket
 import struct
 import asyncore
 from collections import deque
-from sbd_packets import assemble_mo_directip_packet
-from sbd_packets import parse_mt_directip_packet
-from sbd_packets import assemble_mt_directip_response
+from virtual_iridium.sbd_packets import assemble_mo_directip_packet
+from virtual_iridium.sbd_packets import parse_mt_directip_packet
+from virtual_iridium.sbd_packets import assemble_mt_directip_response
 
 AVERAGE_SBDIX_DELAY = 1     #TODO: implement randomness, average is ~30s
 STDEV_SBDIX_DELAY = 1 
