@@ -15,7 +15,7 @@ mt_address = '0.0.0.0'
 mt_port = 40002
 
 # maps imei to address and port
-forward_address = { "300234060379270" : ("127.0.0.1",40003) }
+forward_address = { "300234060379270" : ("127.0.0.1",40010), "300234060379271" : ("127.0.0.1",40011), "300234060379272" : ("127.0.0.1",40012), "300234060379273" : ("127.0.0.1",40013), "300234060379274" : ("127.0.0.1",40014) }
 
 class ConditionalForwardClient(asyncore.dispatcher_with_send):
 

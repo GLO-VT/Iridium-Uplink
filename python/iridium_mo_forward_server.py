@@ -4,20 +4,8 @@
 
 import asyncore
 import socket
+from optparse import OptionParser
 
-# this script listens (binds) on this port
-forward_address = '0.0.0.0'
-forward_port = 4002
-
-# connections that send "goby" as the first four characters gets
-# forwarded to a server listening on this server at this port
-hayes_server = "127.0.0.1"
-hayes_port = 4001
-
-# connections that send "~" as the first character gets
-# forwarded to a server listening on localhost at this port
-sbd_server = "127.0.0.1"
-sbd_port = 4003
 
 class ConditionalForwardClient(asyncore.dispatcher_with_send):
 
@@ -41,8 +29,8 @@ class ConditionalForwardHandler(asyncore.dispatcher_with_send):
         self.addr = addr
 	self.initial_data = ""
         self.buf = ""
-        self.hayes_client = ConditionalForwardClient(self, hayes_server, hayes_port)
-        self.sbd_client = ConditionalForwardClient(self, sbd_server, sbd_port)
+        self.hayes_client = ConditionalForwardClient(self, options.hayes_server, int(options.hayes_port))
+        self.sbd_client = ConditionalForwardClient(self, options.sbd_server, int(options.sbd_port))
         self.sbd_write = False
         self.sbd_bytes_remaining = 0
 
@@ -113,11 +101,28 @@ class ConditionalForwardServer(asyncore.dispatcher):
             print "Unexpected error:", sys.exc_info()[0]
             
 import sys
+
+
+
+
+
+parser = OptionParser()
+parser.add_option("-p", "--port", dest="port", action="store", help="bind port", default=4010)
+parser.add_option("-a", "--hayes_address", dest="hayes_server", action="store", help="address to connect to Hayes AT emulator", default="127.0.0.1")
+parser.add_option("-b", "--hayes_port", dest="hayes_port", action="store", help="address to connect to Hayes AT emulator", default=4001)
+parser.add_option("-c", "--sbd_address", dest="sbd_server", action="store", help="address to connect to SBD emulator", default="127.0.0.1")
+parser.add_option("-d", "--sbd_port", dest="sbd_port", action="store", help="address to connect to SBD emulator", default=4020)
+
+(options, args) = parser.parse_args()
+
+
+forward_address = '0.0.0.0'
+
 print "Iridium Port forwarder starting up ..."
-print "Listening on port: %d" % forward_port
-print "Connecting for Iridium9602 SBD on %s:%d" % (sbd_server, sbd_port)
-print "Connecting for Hayes (ATDuck) on %s:%d" % (hayes_server, hayes_port)
+print "Listening on port: {}".format(int(options.port))
+print "Connecting for Iridium9602 SBD on %s:%d" % (options.sbd_server, int(options.sbd_port))
+print "Connecting for Hayes (ATDuck) on %s:%d" % (options.hayes_server, int(options.hayes_port))
 sys.stdout.flush()
 
-server = ConditionalForwardServer(forward_address, forward_port)
+server = ConditionalForwardServer(forward_address, int(options.port))
 asyncore.loop()

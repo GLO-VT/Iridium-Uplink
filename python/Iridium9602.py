@@ -202,6 +202,7 @@ def sbdix():
                 mtmsn += 1
                 mt_set = True
                 mt_buffer = mt_messages.popleft()
+                unread_msgs = len(mt_messages)
                 received_msg = mt_set
                 received_msg_size = len(mt_buffer)
 
@@ -588,6 +589,7 @@ def main():
     parser.add_option("--mo_port", dest="mo_port", action="store", help="Mobile-originated DirectIP server Port", metavar="MO_PORT", default=10801)
     parser.add_option("--mt_port", dest="mt_port", action="store", help="Mobile-terminated DirectIP server Port", metavar="MT_PORT", default=10800)
     parser.add_option("-m", "--mode", dest="mode", action="store", help="Mode: EMAIL,HTTP_POST,IP,NONE", default="NONE", metavar="MODE")
+    parser.add_option("-e", "--imei", dest="imei", action="store", help="IMEI for this modem", default="300234060379270", metavar="MODE")
 
     (options, args) = parser.parse_args()
 
@@ -622,7 +624,7 @@ def main():
 
     mo_ip = options.mo_ip
     mo_port = int(options.mo_port)
-
+    imei = options.imei
 
     now_get_checksum_first = False
     now_get_checksum_second = False
