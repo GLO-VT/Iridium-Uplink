@@ -45,6 +45,8 @@ class ConditionalForwardHandler(asyncore.dispatcher_with_send):
     def handle_read(self):
         if len(self.data) < self.preheader_size:
             self.data += self.recv(self.preheader_size)
+            if not self.data:
+                return
             preheader = struct.unpack(self.preheader_fmt, self.data)
             self.msg_length = preheader[1]
         else:
@@ -69,6 +71,7 @@ class ConditionalForwardHandler(asyncore.dispatcher_with_send):
             if forward_address.has_key(imei):
                 self.client = ConditionalForwardClient(self, forward_address[imei][0], forward_address[imei][1])
                 self.client.send(self.data)
+                self.data = ''
             else:
                 print 'No forwarding set up for imei: {}'.format(imei)
                 self.close()
