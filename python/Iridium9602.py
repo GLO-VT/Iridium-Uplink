@@ -268,7 +268,7 @@ def read_binary():
     ser.write("%s%s%s%s%s" % (chr(len_msb), chr(len_lsb), mt_buffer,chr(checksum_msb),chr(checksum_lsb)) )
     print "\r\n%s%s%s%s%s" % (chr(len_msb), chr(len_lsb), mt_buffer,chr(checksum_msb),chr(checksum_lsb))
     print checksum_msb, checksum_lsb, len_msb, len_lsb, mt_buffer
-    # send_ok()
+    send_ok()
     
 
 def send_ok():
@@ -298,19 +298,19 @@ def clear_buffers(buffer):
         mo_buffer = ''
         mo_set = False
         ser.write('\r\n0\r\n')
-#        send_ok()
+        send_ok()
     elif buffer == 1:
         mt_buffer = ''
         mt_set = False
         ser.write('\r\n0\r\n')
-#        send_ok()
+        send_ok()
     elif buffer == 2:
         mt_buffer = ''
         mo_buffer = ''
         mo_set = False
         mt_set = False
         ser.write('\r\n0\r\n')
-#        send_ok()
+        send_ok()
     else:
         send_error()
     
@@ -681,14 +681,14 @@ def main():
                 if (checksum_first * 256 + checksum_second) == (binary_checksum & (2**16-1)):
                     print "Good binary checksum"
                     ser.write('\r\n0\r\n')
-                    #send_ok()
+                    send_ok()
                     mo_buffer = rx_buffer
                     rx_buffer = ''
                     mo_set = True
                 else:
                     print "Bad binary checksum"
                     ser.write('\r\n2\r\n')
-                    #send_ok()
+                    send_ok()
                     rx_buffer = ''
                     ser.write('\n')            
                 binary_checksum = 0
