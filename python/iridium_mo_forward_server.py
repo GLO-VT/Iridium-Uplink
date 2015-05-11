@@ -43,6 +43,8 @@ class ConditionalForwardHandler(asyncore.dispatcher_with_send):
             return
         elif self.sbd_write: # not line mode - raw data
             self.sbd_send_bytes(data)
+        elif data == "+++":
+            self.hayes_client.send(data)
         else: # line based Command data
             self.buf += data
             line_list = self.buf.split('\r')

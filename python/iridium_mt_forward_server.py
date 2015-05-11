@@ -11,13 +11,13 @@ from collections import deque
 import struct
 
 # this script listens (binds) on this port
-mt_address = '0.0.0.0'
-mt_port = 40002
+mt_sbd_address = '0.0.0.0'
+mt_sbd_port = 40002
 
 # maps imei to address and port
 forward_address = { "300234060379270" : ("127.0.0.1",40010), "300234060379271" : ("127.0.0.1",40011), "300234060379272" : ("127.0.0.1",40012), "300234060379273" : ("127.0.0.1",40013), "300234060379274" : ("127.0.0.1",40014) }
 
-class ConditionalForwardClient(asyncore.dispatcher_with_send):
+class ConditionalSBDForwardClient(asyncore.dispatcher_with_send):
 
     def __init__(self, server, host, port):
         asyncore.dispatcher_with_send.__init__(self)
@@ -31,7 +31,7 @@ class ConditionalForwardClient(asyncore.dispatcher_with_send):
            self.server.send(data)
 
 
-class ConditionalForwardHandler(asyncore.dispatcher_with_send):
+class ConditionalSBDForwardHandler(asyncore.dispatcher_with_send):
 
     def __init__(self, sock, addr):
         asyncore.dispatcher_with_send.__init__(self, sock)
@@ -69,7 +69,7 @@ class ConditionalForwardHandler(asyncore.dispatcher_with_send):
             print 'Attempting to forward message for imei: {}' .format(imei)
 
             if forward_address.has_key(imei):
-                self.client = ConditionalForwardClient(self, forward_address[imei][0], forward_address[imei][1])
+                self.client = ConditionalSBDForwardClient(self, forward_address[imei][0], forward_address[imei][1])
                 self.client.send(self.data)
                 self.data = ''
             else:
@@ -84,7 +84,7 @@ class ConditionalForwardHandler(asyncore.dispatcher_with_send):
         self.close()
 
 
-class ConditionalForwardServer(asyncore.dispatcher):
+class ConditionalSBDForwardServer(asyncore.dispatcher):
 
     def __init__(self, host, port):
         asyncore.dispatcher.__init__(self)
@@ -100,16 +100,16 @@ class ConditionalForwardServer(asyncore.dispatcher):
             print 'Incoming connection from %s' % repr(addr)
             sys.stdout.flush()
         try:
-            handler = ConditionalForwardHandler(sock, addr)
+            handler = ConditionalSBDForwardHandler(sock, addr)
         except: 
             print "Unexpected error:", sys.exc_info()[0]
             
 import sys
 print "Iridium SBD Port forwarder starting up ..."
-print "Listening on port: %d" % mt_port
+print "Listening for SBD on port: %d" % mt_sbd_port
 
 
 sys.stdout.flush()
 
-server = ConditionalForwardServer(mt_address, mt_port)
+sbd_server = ConditionalSBDForwardServer(mt_sbd_address, mt_sbd_port)
 asyncore.loop()
