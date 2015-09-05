@@ -1,14 +1,21 @@
+#!/usr/bin/python
 import serial
-from serial.tools import list_ports
+#from serial.tools import list_ports
 import os
 from optparse import OptionParser
 import io
 import time
 import random
 import sys
-from smtp_stuff import sendMail 
-from imap_stuff import checkMessages
-
+from virtual_iridium.smtp_stuff import sendMail 
+from virtual_iridium.imap_stuff import checkMessages
+import socket
+import struct
+import asyncore
+from collections import deque
+from virtual_iridium.sbd_packets import assemble_mo_directip_packet
+from virtual_iridium.sbd_packets import parse_mt_directip_packet
+from virtual_iridium.sbd_packets import assemble_mt_directip_response
 
 AVERAGE_SBDIX_DELAY = 1     #TODO: implement randomness, average is ~30s
 STDEV_SBDIX_DELAY = 1 
@@ -57,7 +64,9 @@ incoming_server = ''
 outgoing_server = ''
 password = ''
 
-email_enabled = False
+mo_ip = '127.0.0.1'
+mo_port = 10801
+mt_port = 10800
 
 imei = 300234060379270
 
@@ -65,6 +74,7 @@ email_enabled = False
 ip_enabled = False
 http_post_enabled = False
 
+mt_messages = deque()
 
 def send_mo_email():
     global lat
@@ -103,22 +113,22 @@ Message is Attached.'\
     
     sendMail(subject, body, user, recipient, password, outgoing_server, attachment)
 
-def list_serial_ports():
-    # Windows
-    if os.name == 'nt':
-        # Scan for available ports.
-        available = []
-        for i in range(256):
-            try:
-                s = serial.Serial(i)
-                available.append('COM'+str(i + 1))
-                s.close()
-            except serial.SerialException:
-                pass
-        return available
-    else:
-        # Mac / Linux
-        return [port[0] for port in list_ports.comports()]
+# def list_serial_ports():
+#     # Windows
+#     if os.name == 'nt':
+#         # Scan for available ports.
+#         available = []
+#         for i in range(256):
+#             try:
+#                 s = serial.Serial(i)
+#                 available.append('COM'+str(i + 1))
+#                 s.close()
+#             except serial.SerialException:
+#                 pass
+#         return available
+#     else:
+#         # Mac / Linux
+#         return [port[0] for port in list_ports.comports()]
 
 def write_text(cmd,start_index):
     global mo_set
@@ -142,7 +152,10 @@ def sbdix():
     global password
     global imei
     global mt_buffer
-    
+    global mo_ip
+    global mo_port
+    global mt_set
+
     has_incoming_msg = False
     received_msg = 0
     received_msg_size = 0
@@ -169,9 +182,30 @@ def sbdix():
                 #mtmsn += 1
                 received_msg_size = len(temp)
                 mt_buffer = temp
+                mt_set = True
             else:
                 received_msg_size = 0
     
+        elif ip_enabled:
+            if mo_set and not mo_buffer == "":
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                momsn += 1
+                try:
+                    s.connect((mo_ip, mo_port))
+                    s.send(assemble_mo_directip_packet(imei, momsn, mtmsn, mo_buffer))
+                    s.close()
+                except socket.error as msg:
+                    print "Failed to open {}:{}".format(mo_ip, mo_port)
+                    s.close()                
+                mo_set = False
+            if len(mt_messages) is not 0:
+                mtmsn += 1
+                mt_set = True
+                mt_buffer = mt_messages.popleft()
+                unread_msgs = len(mt_messages)
+                received_msg = mt_set
+                received_msg_size = len(mt_buffer)
+
     #TODO: generate result output
     if success: rpt = 0
     else: rpt = 18 #TODO: add more sophisticated behavior for error msgs
@@ -402,13 +436,14 @@ def write_binary_start(cmd,start_index):
             send_ok()
             binary_rx_incoming_bytes = 0
         else:
+            print 'Ready to receive {} bytes'.format(binary_rx_incoming_bytes)
             send_ready()
             binary_rx = True
     except:
         send_error()
 
-
 def parse_cmd(cmd):
+    global echo
     #get string up to newline or '=' 
     index = cmd.find('=')
     if index == -1:
@@ -443,6 +478,9 @@ def parse_cmd(cmd):
     elif cmd_type == 'at+sbdgw'     : which_gateway()
     elif cmd_type == 'at-msstm'     : get_system_time()
     elif cmd_type == 'at+sbdmta'    : set_ring_indicator(cmd,index + 1)
+    elif cmd_type == 'ate0' or cmd_type == 'ate': 
+        echo = False
+        do_ok()
     elif cmd_type == 'ate1'    : do_ok()
     elif cmd_type == 'at&d0'    : do_ok()
     elif cmd_type == 'at&k0'    : do_ok()
@@ -450,9 +488,71 @@ def parse_cmd(cmd):
     
 
 def open_port(dev,baudrate):
-    ser = serial.Serial(dev, 19200, timeout=1000, parity=serial.PARITY_NONE)
+    ser = serial.Serial(dev, 19200, timeout=.1, parity=serial.PARITY_NONE)
     return ser
+
+class MobileTerminatedHandler(asyncore.dispatcher_with_send):
+    def __init__(self, sock, addr):
+        asyncore.dispatcher_with_send.__init__(self, sock)
+        self.client = None
+        self.addr = addr
+	self.data = ""
+        self.msg_length = 0
+        self.preheader_fmt = '!bH'
+        self.preheader_size = struct.calcsize(self.preheader_fmt)
+
+    def handle_read(self):
+        global mt_messages
+
+        if len(self.data) < self.preheader_size:
+            self.data += self.recv(self.preheader_size)
+            preheader = struct.unpack(self.preheader_fmt, self.data)
+            self.msg_length = preheader[1]
+        else:
+            self.data += self.recv(self.msg_length)
+        
+        print self.msg_length
+        print self.data.encode("hex")
+            
+        if len(self.data) >= self.msg_length:
+            mt_packet = None
+            try: 
+                mt_packet = parse_mt_directip_packet(self.data, mt_messages)
+            except:
+                print 'MT Handler: Invalid message'
+            # response message
+            self.send(assemble_mt_directip_response(mt_packet, mt_messages))
+            self.handle_close()
+
+    def handle_close(self):
+        print 'MT Handler: Connection closed from %s' % repr(self.addr)
+        sys.stdout.flush()
+        self.close()
+
+
+class MobileTerminatedServer(asyncore.dispatcher):
+
+    def __init__(self, host, port):
+        asyncore.dispatcher.__init__(self)
+        self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.set_reuse_addr()
+        self.bind((host, port))
+        self.listen(5)
+
+    def handle_accept(self):
+        pair = self.accept()
+        if pair is not None:
+            sock, addr = pair
+            print 'MT Handler: Incoming connection from %s' % repr(addr)
+            sys.stdout.flush()
+        try:
+            handler = MobileTerminatedHandler(sock, addr)
+        except: 
+            print "MT Handler: Unexpected error:", sys.exc_info()[0]
+
     
+
+
 def main():
     
     global ser
@@ -471,16 +571,29 @@ def main():
     global ip_enabled
     global http_post_enabled
     
+    global mo_ip
+    global mo_port
+    global mt_port
+
+    global echo
+
+
     parser = OptionParser()
     parser.add_option("-d", "--dev", dest="dev", action="store", help="tty dev(ex. '/dev/ttyUSB0'", metavar="DEV")
     parser.add_option("-p", "--passwd", dest="passwd", action="store", help="Password", metavar="PASSWD")
     parser.add_option("-u", "--user", dest="user", action="store", help="E-mail account username", metavar="USER")
     parser.add_option("-r", "--recipient", dest="recipient", action="store", help="Destination e-mail address.", metavar="USER")
     parser.add_option("-i", "--in_srv", dest="in_srv", action="store", help="Incoming e-mail server url", metavar="IN_SRV")
-    parser.add_option("-o", "--out_srv", dest="out_srv", action="store", help="Outoging e-mail server", metavar="OUT_SRV")
+    parser.add_option("-o", "--out_srv", dest="out_srv", action="store", help="Outging e-mail server", metavar="OUT_SRV")
+    parser.add_option("--mo_ip", dest="mo_ip", action="store", help="Mobile-originated DirectIP server IP address", metavar="MO_IP", default="127.0.0.1")
+    parser.add_option("--mo_port", dest="mo_port", action="store", help="Mobile-originated DirectIP server Port", metavar="MO_PORT", default=10801)
+    parser.add_option("--mt_port", dest="mt_port", action="store", help="Mobile-terminated DirectIP server Port", metavar="MT_PORT", default=10800)
     parser.add_option("-m", "--mode", dest="mode", action="store", help="Mode: EMAIL,HTTP_POST,IP,NONE", default="NONE", metavar="MODE")
+    parser.add_option("-e", "--imei", dest="imei", action="store", help="IMEI for this modem", default="300234060379270", metavar="MODE")
 
     (options, args) = parser.parse_args()
+
+    mt_port = int(options.mt_port)
     
     #check for valid arguments
     if options.mode == "EMAIL":
@@ -493,8 +606,11 @@ def main():
         print 'Not implemented yet'
         sys.exit()
     elif options.mode == "IP":
-        print 'Not implemented yet'
-        sys.exit()
+        print 'Using IP mode with MO ({}:{}) and MT (0.0.0.0:{}) servers'.format(options.mo_ip, int(options.mo_port), options.mt_port)
+        server = MobileTerminatedServer('0.0.0.0', mt_port)
+        print "Started MT Server on port {}".format(mt_port)
+        sys.stdout.flush()
+        ip_enabled = True
     else:
         print "No valid mode specified"
         sys.exit()
@@ -506,6 +622,10 @@ def main():
     outgoing_server = options.out_srv
     password = options.passwd
 
+    mo_ip = options.mo_ip
+    mo_port = int(options.mo_port)
+    imei = options.imei
+
     now_get_checksum_first = False
     now_get_checksum_second = False
     
@@ -513,8 +633,8 @@ def main():
         ser = open_port(options.dev,19200)
     except:
         print "Could not open serial port.  Exiting."
-        print "FYI - Here's a list of ports on your system."
-        print list_serial_ports()
+#        print "FYI - Here's a list of ports on your system."
+#        print list_serial_ports()
         sys.exit()
     
     rx_buffer = ''
@@ -522,7 +642,13 @@ def main():
     binary_checksum = 0
     
     while(1):
-        new_char = ser.read()
+        if ip_enabled:
+            asyncore.loop(timeout=0, count=1) # non-blocking loop
+
+        new_char = ser.read() # timeout after .1 seconds to return to asyncore.loop()
+        if (len(new_char) == 0):
+            continue 
+
         #print new_char
         if echo and not binary_rx:
             ser.write(new_char)
