@@ -25,4 +25,5 @@ Other Resources
 
 Iridium 9602 - Developers Manual{TODO}Link to repofile
 
+Thanks to the original autor J.Malsbury. Maybe his repo is more up to date or has mre features.
 [![githalytics.com alpha](https://cruel-carlota.pagodabox.com/bdb824945e9b3e4a959feb550731a1e0 "githalytics.com")](http://githalytics.com/jmalsbury/virtual_iridium)
