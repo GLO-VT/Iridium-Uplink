@@ -77,7 +77,7 @@ if ser.isOpen():
                           #and discard all that is in buffer
 
             #write data
-            serialcmd=("AT +CSQ \r")
+            serialcmd=("AT +CSQF \r")
             response = send2serial(serialcmd.encode())
 
             if response:
