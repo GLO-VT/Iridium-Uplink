@@ -1,7 +1,8 @@
 #Python (3.6.1), pyserial (3.4)
 
 # Program to open a serial connection to the Iridium Edge modem and query 
-# signal strength a given number of times.
+# signal strength a given number of times. It then saves this data to a 
+# .csv file and plots the data using matplotlib.
 
 import time
 import datetime
